@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+ELMVM_DIR="$HOME/.elmvm"
+
+mkdir -p $ELMVM_DIR
+
+elmvm_ls () {
+  ls -1 $ELMVM_DIR
+}
+
+elmvm_ls_remote () {
+  curl --fail --silent "https://api.bintray.com/packages/elmlang/elm-platform/npm" | \
+    python -c "import sys, json; print '\n'.join(json.load(sys.stdin)['versions'])"
+}
+
+elmvm_install () {
+  ELM_VERSION=$1
+  echo "Installing Elm version $ELM_VERSION"
+
+  if [[ "$OSTYPE" == "linux"* ]]; then
+    platform="linux"
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    platform="darwin"
+  else
+    echo "Unknown/unsupported platform '$OSTYPE'."
+    exit 1
+  fi
+
+  REST_RESULT=$(curl --fail --silent "https://api.bintray.com/packages/elmlang/elm-platform/npm/versions/$ELM_VERSION/files")
+
+  if [ "$?" != 0 ]; then
+    echo "Failed to get files for the release. Maybe '$ELM_VERSION' isn't a valid release? (try running elmvm ls-remote)"
+    exit 1
+  fi
+
+  ELM_VERSION_DIR="$ELMVM_DIR/$ELM_VERSION"
+  mkdir -p "$ELM_VERSION_DIR"
+
+  echo $REST_RESULT | \
+    python -c "import sys, json; print '\n'.join(map(lambda v: 'https://dl.bintray.com/elmlang/elm-platform/' + v['path'], filter(lambda v: v['name'].startswith('$platform') and v['name'].endswith('.tar.gz') and 'alpha' not in v['path'], json.load(sys.stdin))))"
+
+  echo $REST_RESULT | \
+    python -c "import sys, json; print '\n'.join(map(lambda v: 'https://dl.bintray.com/elmlang/elm-platform/' + v['path'], filter(lambda v: v['name'].startswith('$platform') and v['name'].endswith('.tar.gz') and 'alpha' not in v['path'], json.load(sys.stdin))))" | \
+    xargs curl --fail -L | \
+    tar xvz -C "$ELM_VERSION_DIR" --strip-components 1
+}
+
+elmvm_strip_path() {
+  #fi
+  P="$1"
+  echo "$P" | sed -e "s#/Users/eirslett/.elmvm/[^:]*:##g"
+}
+
+elmvm_prepend_path() {
+  OLD_PATH="$1"
+  VERSION="$2"
+  NEW="$ELMVM_DIR/$VERSION:$OLD_PATH"
+  echo $NEW
+}
+
+elmvm_use () {
+  # Strip other version from PATH
+  VERSION=$1
+  PATH="$(elmvm_strip_path "$PATH")"
+  PATH="$(elmvm_prepend_path "$PATH" "$VERSION")"
+  echo "$PATH"
+}
+
+elmvm () {
+  if [ $# -lt 1 ]; then
+    elmvm --help
+    return
+  fi
+
+  local COMMAND
+  COMMAND="${1-}"
+  shift
+
+  case $COMMAND in
+    'help' | '--help' )
+      echo 'Elm Version Manager'
+      echo ''
+      echo 'Usage:'
+      echo 'elmvm --help                 Show this message'
+      echo '  elmvm ls                   List installed Elm versions'
+      echo '  elmvm ls-remote            List Elm versions that are available for installation'
+      echo '  elmvm install <version>    Install an Elm version'
+    ;;
+    'ls' )
+      elmvm_ls
+    ;;
+    'ls-remote' )
+      elmvm_ls_remote
+    ;;
+    'install' )
+      ELM_VERSION=$1
+      elmvm_install $ELM_VERSION
+    ;;
+    'use' )
+      PATH=$(elmvm_use $1)
+      export PATH="$PATH"
+    ;;
+    * )
+      echo "Unknown command '$COMMAND'"
+      >&2 elmvm --help
+      return 127;
+    ;;
+  esac
+}
